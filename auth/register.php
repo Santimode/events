@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             if ($insertStmt->execute([$firstName, $middleInitial, $lastName, $suffix, $email, $passwordHash, $token])) {
                 
-                $verifyLink = "http://localhost/event-sys/auth/verify.php?token=" . $token;
+                $verifyLink = BASE_URL . "/auth/verify.php?token=" . $token;
                 
                 // --- START OFFICIAL POSTMARK SDK INTEGRATION ---
                 try {
