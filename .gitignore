@@ -1,0 +1,12 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# VS Code specific settings
+.vscode/
+
+# Ignore environment variables or private config files (for later)
+.env
+
+# If you use Composer for PHP packages later
+vendor/
