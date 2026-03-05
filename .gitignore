@@ -10,5 +10,4 @@ vendor/
 
 # Secret Configuration Files (CRITICAL!)
 includes/config.php
-
 includes/db.php
