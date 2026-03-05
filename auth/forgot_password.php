@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($updateStmt->execute([$token, $user['id']])) {
                 
                 // 5. Send the email via Postmark
-                $resetLink = "http://localhost/event-sys/auth/reset_password.php?token=" . $token;
+                $resetLink = BASE_URL . "/auth/reset_password.php?token=" . $token;
                 
                try {
                     // Force a 15-second timeout instead of 60
