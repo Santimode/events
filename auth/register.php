@@ -1,21 +1,38 @@
 <?php
+// 1. Load the Postmark Client and Exception classes
+use Postmark\PostmarkClient;
+use Postmark\Models\PostmarkException;
+
+// Load Composer's autoloader
+require '../vendor/autoload.php';
+
 // Include the database connection
 require_once '../includes/db.php';
+
+// Include the secret configuration
+require_once '../includes/config.php';
 
 $message = '';
 $messageType = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name']);
+    $firstName = trim($_POST['first_name']);
+    $middleInitial = trim($_POST['middle_initial']);
+    $lastName = trim($_POST['last_name']);
+    $suffix = trim($_POST['suffix']);
     $email = trim($_POST['email']);
     $password = $_POST['password'];
+    $confirmPassword = $_POST['confirm_password'];
 
-    // 1. Basic validation
-    if (empty($name) || empty($email) || empty($password)) {
-        $message = "Please fill in all fields.";
+    // Validate required fields
+    if (empty($firstName) || empty($lastName) || empty($email) || empty($password) || empty($confirmPassword)) {
+        $message = "Please fill in all required fields.";
+        $messageType = "danger";
+    } elseif ($password !== $confirmPassword) {
+        $message = "Passwords do not match. Please try again.";
         $messageType = "danger";
     } else {
-        // 2. Check if the email already exists
+        // Check if the email already exists
         $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
         $stmt->execute([$email]);
         
@@ -23,54 +40,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "An account with this email already exists.";
             $messageType = "warning";
         } else {
-            // 3. Hash the password and create a verification token
             $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-            $token = bin2hex(random_bytes(32)); // Generates a secure random 64-character string
+            $token = bin2hex(random_bytes(32));
 
-            // 4. Insert the user into the database
-            $insertStmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, verification_token) VALUES (?, ?, ?, ?)");
+            // INSERT SEPARATED FIELDS INTO THE DATABASE
+            $insertStmt = $pdo->prepare("INSERT INTO users (first_name, middle_initial, last_name, suffix, email, password_hash, verification_token) VALUES (?, ?, ?, ?, ?, ?, ?)");
             
-            if ($insertStmt->execute([$name, $email, $passwordHash, $token])) {
+            if ($insertStmt->execute([$firstName, $middleInitial, $lastName, $suffix, $email, $passwordHash, $token])) {
                 
-                // 5. Send Verification Email via Postmark API
-                $postmarkToken = 'YOUR_POSTMARK_SERVER_TOKEN'; // Replace with your token
-                $senderEmail = 'sender@yourdomain.com';        // Replace with your verified Postmark sender
-                
-                // The link the user will click (adjust the path if your folder structure differs)
                 $verifyLink = "http://localhost/event-sys/auth/verify.php?token=" . $token;
                 
-                $emailData = [
-                    'From' => $senderEmail,
-                    'To' => $email,
-                    'Subject' => 'Verify your account for the Event Management System',
-                    'HtmlBody' => "Hi $name,<br><br>Thanks for registering! Please verify your account by clicking the link below:<br><br><a href='$verifyLink'>$verifyLink</a><br><br>If you did not request this, please ignore this email.",
-                    'MessageStream' => 'outbound'
-                ];
+                // --- START OFFICIAL POSTMARK SDK INTEGRATION ---
+                try {
+                    // Initialize the client with your Server Token
+                    $client = new PostmarkClient(POSTMARK_TOKEN);
 
-                $ch = curl_init('https://api.postmarkapp.com/email');
-                curl_setopt($ch, CURLOPT_POST, true);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                    'Accept: application/json',
-                    'Content-Type: application/json',
-                    'X-Postmark-Server-Token: ' . $postmarkToken
-                ]);
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($emailData));
-                
-                $response = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
+                    // Set your verified sender email here
+                    $fromEmail = POSTMARK_SENDER;
+                    $toEmail = $email;
+                    $subject = "Verify your account for the Event Management System";
+                    
+                    $htmlBody = "Hi $firstName,<br><br>Thanks for registering! Please verify your account by clicking the link below:<br><br><a href='$verifyLink'>$verifyLink</a><br><br>If you did not request this, please ignore this email.";
+                    $textBody = "Hi $firstName,\n\nThanks for registering! Please verify your account by copying and pasting this link into your browser:\n\n$verifyLink\n\nIf you did not request this, please ignore this email.";
 
-                // 6. Provide feedback to the user
-                if ($httpCode == 200) {
+                    // Send the email
+                    $sendResult = $client->sendEmail(
+                        $fromEmail, 
+                        $toEmail, 
+                        $subject, 
+                        $htmlBody, 
+                        $textBody,
+                        null, // Tag
+                        true, // Track opens
+                        null, // Reply To
+                        null, // CC
+                        null, // BCC
+                        null, // Headers
+                        null, // Attachments
+                        null, // Track links
+                        null, // Metadata
+                        "outbound" // Message Stream
+                    );
+
                     $message = "Registration successful! Please check your email to verify your account.";
                     $messageType = "success";
-                } else {
-                    // Registration worked, but email failed
-                    $message = "Registered, but we couldn't send the verification email. Please contact support.";
+
+                } catch (PostmarkException $ex) {
+                    // Postmark specific errors (e.g., Unverified sender, inactive account)
+                    $message = "Registered, but email failed. Postmark Error: " . $ex->message . " (Code: " . $ex->postmarkApiErrorCode . ")";
                     $messageType = "warning";
-                    // In a real app, you'd log the $response here to debug Postmark errors
+                } catch (Exception $e) {
+                    // General PHP errors
+                    $message = "Registered, but a general error occurred sending the email: " . $e->getMessage();
+                    $messageType = "warning";
                 }
+                // --- END OFFICIAL POSTMARK SDK INTEGRATION ---
+
             } else {
                 $message = "Something went wrong during registration. Please try again.";
                 $messageType = "danger";
@@ -90,9 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body class="bg-light">
 
-<div class="container mt-5">
+<div class="container mt-5 mb-5">
     <div class="row justify-content-center">
-        <div class="col-md-6">
+        <div class="col-md-8 col-lg-6">
             <div class="card shadow-sm">
                 <div class="card-header bg-primary text-white">
                     <h4 class="mb-0">Create an Account</h4>
@@ -107,27 +132,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <?php endif; ?>
 
                     <form action="register.php" method="POST">
-                        <div class="mb-3">
-                            <label for="name" class="form-label">Full Name</label>
-                            <input type="text" class="form-control" id="name" name="name" required>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-5 mb-3 mb-md-0">
+                                <label for="first_name" class="form-label">First Name *</label>
+                                <input type="text" class="form-control" id="first_name" name="first_name" required>
+                            </div>
+                            <div class="col-md-2 mb-3 mb-md-0">
+                                <label for="middle_initial" class="form-label">M.I.</label>
+                                <input type="text" class="form-control" id="middle_initial" name="middle_initial" maxlength="2" placeholder="e.g. A.">
+                            </div>
+                            <div class="col-md-5">
+                                <label for="last_name" class="form-label">Last Name *</label>
+                                <input type="text" class="form-control" id="last_name" name="last_name" required>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-3 mb-3 mb-md-0">
+                                <label for="suffix" class="form-label">Suffix</label>
+                                <select class="form-select" id="suffix" name="suffix">
+                                    <option value="">None</option>
+                                    <option value="Jr.">Jr.</option>
+                                    <option value="Sr.">Sr.</option>
+                                    <option value="II">II</option>
+                                    <option value="III">III</option>
+                                    <option value="IV">IV</option>
+                                </select>
+                            </div>
+                            <div class="col-md-9">
+                                <label for="email" class="form-label">Email address *</label>
+                                <input type="email" class="form-control" id="email" name="email" required>
+                            </div>
                         </div>
                         
-                        <div class="mb-3">
-                            <label for="email" class="form-label">Email address</label>
-                            <input type="email" class="form-control" id="email" name="email" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label for="password" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                        <div class="row mb-4">
+                            <div class="col-md-6 mb-3 mb-md-0">
+                                <label for="password" class="form-label">Password *</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="confirm_password" class="form-label">Confirm Password *</label>
+                                <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                            </div>
                         </div>
                         
                         <div class="d-grid">
-                            <button type="submit" class="btn btn-primary">Register</button>
+                            <button type="submit" class="btn btn-primary btn-lg">Register</button>
                         </div>
                     </form>
-                    <div class="mt-3 text-center">
-                        <p>Already have an account? <a href="login.php">Log in here</a>.</p>
+                    
+                    <div class="mt-4 text-center">
+                        <p class="mb-0">Already have an account? <a href="login.php" class="text-decoration-none fw-bold">Log in here</a>.</p>
                     </div>
                 </div>
             </div>

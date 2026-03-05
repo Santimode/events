@@ -5,8 +5,8 @@ Thumbs.db
 # VS Code specific settings
 .vscode/
 
-# Ignore environment variables or private config files (for later)
-.env
-
-# If you use Composer for PHP packages later
+# Composer dependencies (Never commit the vendor folder!)
 vendor/
+
+# Secret Configuration Files (CRITICAL!)
+includes/config.php
