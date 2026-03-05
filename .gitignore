@@ -11,3 +11,7 @@ vendor/
 # Secret Configuration Files (CRITICAL!)
 includes/config.php
 includes/db.php
+
+# Ignore User Uploads
+uploads/profile-picture/*
+!uploads/profile-picture/.gitkeep
