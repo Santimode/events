@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         } else {
             $stmt = $pdo->prepare("UPDATE users SET first_name = ?, middle_initial = ?, last_name = ?, suffix = ? WHERE id = ?");
             if ($stmt->execute([$first, $middle, $last, $suffix, $userId])) {
-                $_SESSION['first_name'] = $first; // Update navbar immediately
+                $_SESSION['first_name'] = $first; // Update session name immediately
                 $message = "Profile information updated successfully!";
                 $messageType = "success";
             }
@@ -45,7 +45,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
             
-            // Validate extension and size (Max 2MB)
             if (!in_array($fileExtension, $allowedExtensions)) {
                 $message = "Invalid file type. Only JPG, PNG, and GIF are allowed.";
                 $messageType = "danger";
@@ -53,17 +52,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $message = "File is too large. Maximum size is 2MB.";
                 $messageType = "danger";
             } else {
-                // Generate a unique filename: user_1_1690000000.jpg
                 $newFileName = 'user_' . $userId . '_' . time() . '.' . $fileExtension;
                 $uploadDir = 'uploads/profile-picture/';
                 
-                // Create directory if it doesn't exist just in case
                 if (!is_dir($uploadDir)) {
                     mkdir($uploadDir, 0755, true);
                 }
 
                 if (move_uploaded_file($tmpName, $uploadDir . $newFileName)) {
-                    // Update Database
                     $stmt = $pdo->prepare("UPDATE users SET profile_picture = ? WHERE id = ?");
                     $stmt->execute([$newFileName, $userId]);
                     $message = "Profile picture updated!";
@@ -85,7 +81,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $newPassword = $_POST['new_password'];
         $confirmPassword = $_POST['confirm_password'];
 
-        // Verify current password first
         $stmt = $pdo->prepare("SELECT password FROM users WHERE id = ?");
         $stmt->execute([$userId]);
         $user = $stmt->fetch();
@@ -109,33 +104,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 }
 
-// 3. FETCH LATEST USER DATA TO POPULATE FORMS
+// 3. FETCH LATEST USER DATA
 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
 $stmt->execute([$userId]);
 $currentUser = $stmt->fetch();
+
+// --- INJECT HEADER ---
+require_once 'includes/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Profile - Event Management System</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-    <div class="container">
-        <a class="navbar-brand" href="index.php">EventSys</a>
-        <div class="d-flex ms-auto">
-            <a href="index.php" class="btn btn-outline-light me-2">Back to Events</a>
-            <a href="auth/logout.php" class="btn btn-danger">Logout</a>
-        </div>
-    </div>
-</nav>
-
-<div class="container">
+<div class="container my-5">
     <div class="row justify-content-center">
         <div class="col-md-8">
             <h2 class="mb-4">Account Settings</h2>
@@ -153,9 +131,13 @@ $currentUser = $stmt->fetch();
                         <?php 
                             $avatar = $currentUser['profile_picture'];
                             $imgPath = "uploads/profile-picture/" . $avatar;
-                            if (!file_exists($imgPath) || empty($avatar)) {
-                                // Fallback to a UI avatar if file is missing
+                            
+                            // Adjust path depending on where profile.php is located relative to uploads
+                            if (!file_exists($imgPath) || empty($avatar) || $avatar === 'default.png') {
                                 $imgPath = "https://ui-avatars.com/api/?name=" . urlencode($currentUser['first_name'] . '+' . $currentUser['last_name']) . "&background=random";
+                            } else {
+                                // Add a cache-busting timestamp so new uploads show immediately
+                                $imgPath .= "?t=" . time(); 
                             }
                         ?>
                         <img src="<?php echo $imgPath; ?>" alt="Profile Picture" class="rounded-circle" style="width: 100px; height: 100px; object-fit: cover; border: 3px solid #dee2e6;">
@@ -241,6 +223,7 @@ $currentUser = $stmt->fetch();
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+<?php 
+// --- INJECT FOOTER ---
+require_once 'includes/footer.php'; 
+?>
