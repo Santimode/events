@@ -3,7 +3,7 @@ session_start();
 require_once '../includes/db.php';
 
 // --- 1. STRICT ACCESS CONTROL ---
-// Kick out anyone who is not logged in OR is not an admin
+// Kick out anyone who is not logged in OR is not a system admin
 if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'admin') {
     header("Location: ../index.php");
     exit;
@@ -12,57 +12,42 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'admin') {
 $message = '';
 $messageType = '';
 
-// --- 2. HANDLE FORM SUBMISSIONS (CREATE & DELETE) ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// --- 2. HANDLE ROLE UPDATES ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_role') {
+    $targetUserId = (int)$_POST['user_id'];
+    $newRole = $_POST['new_role'];
     
-    // CREATE EVENT
-    if (isset($_POST['action']) && $_POST['action'] === 'create') {
-        $title = trim($_POST['title']);
-        $description = trim($_POST['description']);
-        $event_type = $_POST['event_type'];
-        $start_datetime = $_POST['start_datetime'];
-        $capacity = (int)$_POST['capacity'];
-
-        if (empty($title) || empty($event_type) || empty($start_datetime)) {
-            $message = "Please fill in all required fields.";
-            $messageType = "danger";
-        } else {
-            $stmt = $pdo->prepare("INSERT INTO events (title, description, event_type, start_datetime, capacity) VALUES (?, ?, ?, ?, ?)");
-            if ($stmt->execute([$title, $description, $event_type, $start_datetime, $capacity])) {
-                $message = "Event successfully created!";
-                $messageType = "success";
-            } else {
-                $message = "Failed to create event.";
-                $messageType = "danger";
-            }
-        }
-    }
-
-    // DELETE EVENT
-    if (isset($_POST['action']) && $_POST['action'] === 'delete') {
-        $event_id = (int)$_POST['event_id'];
-        // Because we used ON DELETE CASCADE in our database schema, 
-        // deleting the event will automatically delete its registrations!
-        $stmt = $pdo->prepare("DELETE FROM events WHERE id = ?");
-        if ($stmt->execute([$event_id])) {
-            $message = "Event deleted successfully.";
+    // Security check: Prevent the admin from accidentally demoting themselves!
+    if ($targetUserId === $_SESSION['user_id']) {
+        $message = "You cannot change your own role. Ask another admin to do it.";
+        $messageType = "warning";
+    } else {
+        $updateStmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+        if ($updateStmt->execute([$newRole, $targetUserId])) {
+            $message = "User role successfully updated!";
             $messageType = "success";
         } else {
-            $message = "Failed to delete event.";
+            $message = "Failed to update user role.";
             $messageType = "danger";
         }
     }
 }
 
-// --- 3. FETCH ALL EVENTS WITH REGISTRATION COUNTS ---
-// We use a subquery to count how many people have registered for each event
-$query = "
-    SELECT e.*, 
-    (SELECT COUNT(*) FROM registrations r WHERE r.event_id = e.id) as attendee_count 
+// --- 3. FETCH MASTER DATA ---
+// Fetch all users
+$usersStmt = $pdo->query("SELECT id, first_name, last_name, email, role, created_at FROM users ORDER BY created_at DESC");
+$allUsers = $usersStmt->fetchAll();
+
+// Fetch all events with their organizer's name
+$eventsQuery = "
+    SELECT e.id, e.title, e.start_datetime, e.location_type, e.event_type, 
+           u.first_name AS org_first, u.last_name AS org_last
     FROM events e 
+    LEFT JOIN users u ON e.organizer_id = u.id 
     ORDER BY e.start_datetime DESC
 ";
-$events = $pdo->query($query)->fetchAll();
+$eventsStmt = $pdo->query($eventsQuery);
+$allEvents = $eventsStmt->fetchAll();
 ?>
 
 <!DOCTYPE html>
@@ -75,14 +60,17 @@ $events = $pdo->query($query)->fetchAll();
 </head>
 <body class="bg-light">
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
     <div class="container-fluid">
-        <a class="navbar-brand" href="dashboard.php">EventSys Admin</a>
+        <a class="navbar-brand" href="dashboard.php">EventSys Admin Overview</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNav">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="adminNav">
             <ul class="navbar-nav ms-auto">
+                <li class="nav-item">
+                    <span class="nav-link text-light">System Admin: <?php echo htmlspecialchars($_SESSION['first_name']); ?></span>
+                </li>
                 <li class="nav-item">
                     <a class="nav-link" href="../index.php">View Public Site</a>
                 </li>
@@ -95,101 +83,103 @@ $events = $pdo->query($query)->fetchAll();
 </nav>
 
 <div class="container-fluid px-4">
-    <div class="row">
-        <div class="col-md-4 mb-4">
-            <div class="card shadow-sm">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0">Create New Event</h5>
-                </div>
-                <div class="card-body">
-                    <?php if ($message): ?>
-                        <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show" role="alert">
-                            <?php echo $message; ?>
-                            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                        </div>
-                    <?php endif; ?>
+    
+    <?php if ($message): ?>
+        <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show" role="alert">
+            <?php echo $message; ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    <?php endif; ?>
 
-                    <form action="dashboard.php" method="POST">
-                        <input type="hidden" name="action" value="create">
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Event Title *</label>
-                            <input type="text" class="form-control" name="title" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Event Type *</label>
-                            <select class="form-select" name="event_type" required>
-                                <option value="Training">Training</option>
-                                <option value="Seminar">Seminar</option>
-                                <option value="Conference">Conference</option>
-                                <option value="Webinar">Webinar</option>
-                            </select>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Start Date & Time *</label>
-                            <input type="datetime-local" class="form-control" name="start_datetime" required>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Capacity (0 for unlimited)</label>
-                            <input type="number" class="form-control" name="capacity" value="0" min="0">
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Description</label>
-                            <textarea class="form-control" name="description" rows="3"></textarea>
-                        </div>
-                        
-                        <button type="submit" class="btn btn-primary w-100">Create Event</button>
-                    </form>
+    <div class="row">
+        <div class="col-lg-7 mb-4">
+            <div class="card shadow-sm border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">User Management</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-hover table-striped mb-0 align-middle">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Joined</th>
+                                    <th>Role Configuration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($allUsers as $user): ?>
+                                    <tr>
+                                        <td><strong><?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name']); ?></strong></td>
+                                        <td><?php echo htmlspecialchars($user['email']); ?></td>
+                                        <td><small class="text-muted"><?php echo date('M d, Y', strtotime($user['created_at'])); ?></small></td>
+                                        <td>
+                                            <form action="dashboard.php" method="POST" class="d-flex align-items-center">
+                                                <input type="hidden" name="action" value="update_role">
+                                                <input type="hidden" name="user_id" value="<?php echo $user['id']; ?>">
+                                                
+                                                <select name="new_role" class="form-select form-select-sm me-2 w-auto" 
+                                                    <?php echo ($user['id'] === $_SESSION['user_id']) ? 'disabled' : ''; ?>>
+                                                    <option value="attendee" <?php echo $user['role'] === 'attendee' ? 'selected' : ''; ?>>Attendee</option>
+                                                    <option value="organizer" <?php echo $user['role'] === 'organizer' ? 'selected' : ''; ?>>Organizer</option>
+                                                    <option value="admin" <?php echo $user['role'] === 'admin' ? 'selected' : ''; ?>>Admin</option>
+                                                </select>
+                                                
+                                                <button type="submit" class="btn btn-sm btn-outline-primary" 
+                                                    <?php echo ($user['id'] === $_SESSION['user_id']) ? 'disabled' : ''; ?>>
+                                                    Save
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-8">
-            <div class="card shadow-sm">
-                <div class="card-header bg-dark text-white">
-                    <h5 class="mb-0">Manage Events</h5>
+        <div class="col-lg-5 mb-4">
+            <div class="card shadow-sm border-secondary">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Global Event Oversight</h5>
                 </div>
                 <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-hover table-striped mb-0">
-                            <thead class="table-light">
+                    <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                        <table class="table table-hover mb-0">
+                            <thead class="table-light sticky-top">
                                 <tr>
-                                    <th>Title</th>
-                                    <th>Type</th>
-                                    <th>Date & Time</th>
-                                    <th>Attendees</th>
-                                    <th>Actions</th>
+                                    <th>Event Title</th>
+                                    <th>Hosted By</th>
+                                    <th>Date</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php if (count($events) > 0): ?>
-                                    <?php foreach ($events as $event): ?>
+                                <?php if (count($allEvents) > 0): ?>
+                                    <?php foreach ($allEvents as $event): ?>
                                         <tr>
-                                            <td><strong><?php echo htmlspecialchars($event['title']); ?></strong></td>
-                                            <td><span class="badge bg-secondary"><?php echo htmlspecialchars($event['event_type']); ?></span></td>
-                                            <td><?php echo date('M d, Y g:i A', strtotime($event['start_datetime'])); ?></td>
                                             <td>
-                                                <?php echo $event['attendee_count']; ?> 
-                                                <?php echo $event['capacity'] > 0 ? '/ ' . $event['capacity'] : ''; ?>
+                                                <strong><?php echo htmlspecialchars($event['title']); ?></strong><br>
+                                                <span class="badge bg-light text-dark border"><?php echo $event['event_type']; ?></span>
+                                                <span class="badge <?php echo $event['location_type'] === 'virtual' ? 'bg-info' : 'bg-warning'; ?> text-dark">
+                                                    <?php echo ucfirst($event['location_type']); ?>
+                                                </span>
                                             </td>
                                             <td>
-                                                <a href="attendees.php?id=<?php echo $event['id']; ?>" class="btn btn-sm btn-info text-white me-1">View Attendees</a>
-                                                
-                                                <form action="dashboard.php" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this event? This will also remove all registrations.');">
-                                                    <input type="hidden" name="action" value="delete">
-                                                    <input type="hidden" name="event_id" value="<?php echo $event['id']; ?>">
-                                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                                                </form>
+                                                <?php 
+                                                    echo $event['org_first'] 
+                                                        ? htmlspecialchars($event['org_first'] . ' ' . $event['org_last']) 
+                                                        : '<span class="text-danger"><em>System (No Organizer)</em></span>'; 
+                                                ?>
                                             </td>
+                                            <td><small><?php echo date('M d, y', strtotime($event['start_datetime'])); ?></small></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php else: ?>
                                     <tr>
-                                        <td colspan="5" class="text-center py-4">No events found. Create one to get started!</td>
+                                        <td colspan="3" class="text-center py-4 text-muted">No events have been created yet.</td>
                                     </tr>
                                 <?php endif; ?>
                             </tbody>
@@ -198,6 +188,7 @@ $events = $pdo->query($query)->fetchAll();
                 </div>
             </div>
         </div>
+        
     </div>
 </div>
 
