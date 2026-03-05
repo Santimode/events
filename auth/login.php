@@ -34,19 +34,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // 4. Check if the user has verified their email via Postmark
             if ($user['is_verified'] == 1) {
                 
-                // 5. Success! Set session variables
+// 5. Success! Set session variables
                 $_SESSION['user_id'] = $user['id'];
-                // Store first name for casual greetings, or assemble a full name for the session
                 $_SESSION['first_name'] = $user['first_name'];
                 $_SESSION['user_role'] = $user['role'];
-
-                // 6. Redirect based on user role
-                if ($user['role'] === 'admin') {
+                
+                // 6. Role-Based Redirects
+                if ($_SESSION['user_role'] === 'admin') {
                     header("Location: ../admin/dashboard.php");
+                } elseif ($_SESSION['user_role'] === 'organizer') {
+                    // NEW: Route Organizers to their specific dashboard
+                    header("Location: ../organizer/dashboard.php");
                 } else {
-                    header("Location: ../index.php"); // Main event listing
+                    // Default for regular attendees
+                    header("Location: ../index.php");
                 }
-                exit; // Always exit after a header redirect
+                exit;
                 
             } else {
                 $message = "Please verify your email address before logging in. Check your inbox.";
@@ -96,6 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div class="mb-3">
                             <label for="password" class="form-label">Password</label>
                             <input type="password" class="form-control" id="password" name="password" required>
+                            <a href="forgot_password.php" class="text-decoration-none small">Forgot password?</a>
                         </div>
                         
                         <div class="d-grid mb-3">
