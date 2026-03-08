@@ -2,137 +2,132 @@
 session_start();
 require_once '../includes/db.php';
 
-// --- 1. STRICT ACCESS CONTROL ---
+// 1. STRICT ACCESS CONTROL
 if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'organizer') {
     header("Location: ../index.php");
     exit;
 }
 
-$organizerId = $_SESSION['user_id'];
-
-// --- 2. VALIDATE THE EVENT ID ---
-if (!isset($_GET['id']) || empty($_GET['id'])) {
-    header("Location: dashboard.php");
-    exit;
+// 2. REQUIRE AN EVENT ID IN THE URL
+if (!isset($_GET['id'])) {
+    die("Error: No event selected. Please go back to your dashboard.");
 }
 
-$event_id = (int)$_GET['id'];
+$eventId = (int)$_GET['id'];
+$organizerId = $_SESSION['user_id'];
 
-// --- 3. SECURITY: FETCH EVENT & VERIFY OWNERSHIP ---
-// This prevents Organizer A from viewing Organizer B's event by guessing the URL ID
-$eventStmt = $pdo->prepare("SELECT title, start_datetime, capacity FROM events WHERE id = ? AND organizer_id = ?");
-$eventStmt->execute([$event_id, $organizerId]);
+// 3. VERIFY OWNERSHIP (Security check!)
+$eventStmt = $pdo->prepare("SELECT title, start_datetime FROM events WHERE id = ? AND organizer_id = ?");
+$eventStmt->execute([$eventId, $organizerId]);
 $event = $eventStmt->fetch();
 
 if (!$event) {
-    die("<div style='font-family: sans-serif; padding: 20px; text-align: center;'>Event not found or you do not have permission to view this event's attendees. <br><br><a href='dashboard.php'>&larr; Return to Dashboard</a></div>");
+    die("Error: You do not have permission to view attendees for this event.");
 }
 
-// --- 4. FETCH ATTENDEES & TICKET IDS ---
-$query = "
-    SELECT u.first_name, u.middle_initial, u.last_name, u.suffix, u.email, r.registration_date, r.ticket_id 
-    FROM users u
-    INNER JOIN registrations r ON u.id = r.user_id
+// 4. FETCH ALL REGISTRATIONS FOR THIS EVENT
+$attendeeStmt = $pdo->prepare("
+    SELECT r.ticket_id, r.registration_date, r.is_checked_in, r.check_in_time, 
+           u.first_name, u.last_name, u.email 
+    FROM registrations r
+    JOIN users u ON r.user_id = u.id
     WHERE r.event_id = ?
-    ORDER BY u.last_name ASC, u.first_name ASC
-";
-$attendeesStmt = $pdo->prepare($query);
-$attendeesStmt->execute([$event_id]);
-$attendees = $attendeesStmt->fetchAll();
+    ORDER BY r.is_checked_in DESC, u.last_name ASC
+");
+$attendeeStmt->execute([$eventId]);
+$attendees = $attendeeStmt->fetchAll();
+
+// 5. CALCULATE QUICK STATS
+$totalRegistered = count($attendees);
+$totalCheckedIn = 0;
+foreach ($attendees as $a) {
+    if ($a['is_checked_in'] == 1) {
+        $totalCheckedIn++;
+    }
+}
+
+// --- INJECT HEADER ---
+require_once '../includes/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attendees - <?php echo htmlspecialchars($event['title']); ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-
-<nav class="navbar navbar-expand-lg navbar-dark bg-success mb-4">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="dashboard.php">EventSys Organizer</a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#organizerNav">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="organizerNav">
-            <ul class="navbar-nav ms-auto">
-                <li class="nav-item">
-                    <a class="nav-link" href="../index.php">View Public Site</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="../auth/logout.php">Logout</a>
-                </li>
-            </ul>
+<div class="container my-5">
+    
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
+        <div>
+            <h2 class="mb-1"><?php echo htmlspecialchars($event['title']); ?> - Master List</h2>
+            <p class="text-muted mb-0">Date: <?php echo date('F j, Y \a\t g:i A', strtotime($event['start_datetime'])); ?></p>
         </div>
-    </div>
-</nav>
-
-<div class="container">
-    <div class="row mb-3 align-items-center">
-        <div class="col-md-8">
-            <h2>Attendees for: <span class="text-success"><?php echo htmlspecialchars($event['title']); ?></span></h2>
-            <p class="text-muted mb-0">
-                Scheduled for: <?php echo date('F j, Y, g:i a', strtotime($event['start_datetime'])); ?> | 
-                Total Registered: <strong><?php echo count($attendees); ?></strong> 
-                <?php echo $event['capacity'] > 0 ? '/ ' . $event['capacity'] : ''; ?>
-            </p>
-        </div>
-        <div class="col-md-4 text-md-end mt-3 mt-md-0">
-            <a href="dashboard.php" class="btn btn-outline-secondary">&larr; Back to Dashboard</a>
+        <div class="d-flex gap-2">
+            <a href="dashboard.php" class="btn btn-outline-secondary">&larr; Dashboard</a>
+            <a href="scan.php?event_id=<?php echo $eventId; ?>" class="btn btn-primary">📷 Open Scanner</a>
         </div>
     </div>
 
-    <div class="card shadow-sm border-success">
+    <div class="row mb-4">
+        <div class="col-md-6 mb-3 mb-md-0">
+            <div class="card text-white bg-primary shadow-sm h-100 border-0">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-title text-uppercase text-white-50 fw-bold mb-1">Total Registered</h6>
+                        <h2 class="mb-0 fw-bold"><?php echo $totalRegistered; ?></h2>
+                    </div>
+                    <span class="display-4 opacity-50">🎟️</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card text-white bg-success shadow-sm h-100 border-0">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="card-title text-uppercase text-white-50 fw-bold mb-1">Checked In (At Door)</h6>
+                        <h2 class="mb-0 fw-bold"><?php echo $totalCheckedIn; ?></h2>
+                    </div>
+                    <span class="display-4 opacity-50">✅</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-dark">
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover table-striped mb-0">
-                    <thead class="table-light">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-dark">
                         <tr>
-                            <th>#</th>
                             <th>Ticket ID</th>
                             <th>Attendee Name</th>
-                            <th>Email Address</th>
+                            <th>Email</th>
                             <th>Registration Date</th>
+                            <th>Check-in Status</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (count($attendees) > 0): ?>
-                            <?php $counter = 1; ?>
+                        <?php if ($totalRegistered > 0): ?>
                             <?php foreach ($attendees as $attendee): ?>
                                 <tr>
-                                    <td class="text-muted"><?php echo $counter++; ?></td>
-                                    
                                     <td>
-                                        <span class="badge bg-dark font-monospace" style="font-size: 0.9em;">
+                                        <span class="badge bg-secondary font-monospace fs-6">
                                             <?php echo htmlspecialchars($attendee['ticket_id'] ?? 'N/A'); ?>
                                         </span>
                                     </td>
-                                    
-                                    <td>
-                                        <strong>
-                                        <?php 
-                                            $nameParts = array_filter([
-                                                $attendee['first_name'], 
-                                                $attendee['middle_initial'], 
-                                                $attendee['last_name'], 
-                                                $attendee['suffix']
-                                            ]);
-                                            echo htmlspecialchars(implode(' ', $nameParts)); 
-                                        ?>
-                                        </strong>
-                                    </td>
-
+                                    <td><strong><?php echo htmlspecialchars($attendee['last_name'] . ', ' . $attendee['first_name']); ?></strong></td>
                                     <td><a href="mailto:<?php echo htmlspecialchars($attendee['email']); ?>" class="text-decoration-none"><?php echo htmlspecialchars($attendee['email']); ?></a></td>
-                                    <td><?php echo date('M d, Y g:i A', strtotime($attendee['registration_date'])); ?></td>
+                                    <td><small class="text-muted"><?php echo date('M d, Y', strtotime($attendee['registration_date'])); ?></small></td>
+                                    <td>
+                                        <?php if ($attendee['is_checked_in'] == 1): ?>
+                                            <span class="badge bg-success py-2 px-3">
+                                                ✓ Checked In at <?php echo date('g:i A', strtotime($attendee['check_in_time'])); ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="badge bg-light text-muted border py-2 px-3">Pending Arrival</span>
+                                        <?php endif; ?>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="5" class="text-center py-5 text-muted">
-                                    No one has registered for this event yet.
+                                <td colspan="5" class="text-center py-5">
+                                    <p class="text-muted mb-0">No attendees have registered for this event yet.</p>
                                 </td>
                             </tr>
                         <?php endif; ?>
@@ -143,6 +138,7 @@ $attendees = $attendeesStmt->fetchAll();
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+<?php 
+// --- INJECT FOOTER ---
+require_once '../includes/footer.php'; 
+?>
